@@ -456,6 +456,50 @@ def _news_newsapi(query: str, category: str = '') -> dict:
             'article_count': len(items), 'articles': items[:10]}
 
 
+def _yf_news_items(symbol: str, limit: int = 15) -> list:
+    """yfinance news normalised to the legacy schema.
+
+    Keys: title, publisher, link, providerPublishTime.
+
+    ``Ticker.news`` is empty for many symbols on newer yfinance builds, so fall
+    back to ``Search.news`` (which still returns the legacy shape). Items using
+    the newer ``content`` shape are normalised to the same keys.
+    """
+    import yfinance as yf
+    raw = []
+    try:
+        raw = yf.Ticker(symbol).news or []
+    except Exception:
+        raw = []
+    if not raw:
+        try:
+            raw = yf.Search(symbol).news or []
+        except Exception:
+            raw = []
+    out = []
+    for n in raw:
+        if not isinstance(n, dict):
+            continue
+        c = n.get('content') if isinstance(n.get('content'), dict) else None
+        if c:
+            prov  = c.get('provider') if isinstance(c.get('provider'), dict) else {}
+            canon = c.get('canonicalUrl') if isinstance(c.get('canonicalUrl'), dict) else {}
+            click = c.get('clickThroughUrl') if isinstance(c.get('clickThroughUrl'), dict) else {}
+            ts, pd = 0, c.get('pubDate') or c.get('displayTime') or ''
+            if pd:
+                try:
+                    ts = int(datetime.fromisoformat(str(pd).replace('Z', '+00:00')).timestamp())
+                except Exception:
+                    ts = 0
+            out.append({'title': c.get('title', ''),
+                        'publisher': prov.get('displayName') or c.get('publisher', ''),
+                        'providerPublishTime': ts,
+                        'link': canon.get('url') or click.get('url') or ''})
+        else:
+            out.append(n)
+    return out[:limit]
+
+
 def _news_yfinance_fallback(query: str, category: str = '') -> dict:
     """yfinance RSS news for a ticker or market-wide (SPY proxy)."""
     import re as _re2
@@ -465,7 +509,7 @@ def _news_yfinance_fallback(query: str, category: str = '') -> dict:
         import yfinance as yf
         seen, items = set(), []
         for sym in syms:
-            for n in (yf.Ticker(sym).news or [])[:8]:
+            for n in _yf_news_items(sym, limit=8):
                 t = n.get('title', '')
                 if t and t not in seen:
                     seen.add(t)

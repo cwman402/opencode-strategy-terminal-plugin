@@ -542,8 +542,8 @@ def _yf_info(symbol: str) -> dict:
 def _yf_news(symbol: str) -> list:
     if not _YF_OK: return []
     try:
-        t = yf.Ticker(symbol)
-        return (t.news or [])[:15]
+        from chat import _yf_news_items
+        return _yf_news_items(symbol, limit=15)
     except: return []
 
 @st.cache_data(ttl=600, show_spinner=False)
