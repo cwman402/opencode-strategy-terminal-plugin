@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+app-cli/users.db
+app-cli/cli_out/

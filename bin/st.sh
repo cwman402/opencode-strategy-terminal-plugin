@@ -13,13 +13,22 @@
 # string, so the arguments are word-split before flags are classified.
 #
 # Configuration (optional):
-#   ST_CLI_APP_DIR   folder containing app-cli.py  (default ~/Apps/StrategyTerminal)
+#   ST_CLI_APP_DIR   folder containing app-cli.py
+#                    (default: the bundled app at
+#                     ~/.config/opencode/strategy-terminal, falling back to
+#                     ~/Apps/StrategyTerminal)
 #   ST_CLI_PYTHON    python with the app's deps
 #                    (default $ST_CLI_PYTHON, else <app>/venv/bin/python,
 #                     <app>/.venv/bin/python, ~/venv/bin/python, python3)
 set -uo pipefail
 
-APP_DIR="${ST_CLI_APP_DIR:-$HOME/Apps/StrategyTerminal}"
+if [ -n "${ST_CLI_APP_DIR:-}" ]; then
+  APP_DIR="$ST_CLI_APP_DIR"
+elif [ -f "${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}/strategy-terminal/app-cli.py" ]; then
+  APP_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}/strategy-terminal"
+else
+  APP_DIR="$HOME/Apps/StrategyTerminal"
+fi
 
 resolve_python() {
   if [ -n "${ST_CLI_PYTHON:-}" ]; then printf '%s' "$ST_CLI_PYTHON"; return; fi

@@ -20,7 +20,9 @@
  *
  * Configuration (all optional, see README):
  *   ST_CLI_APP_DIR     folder containing app-cli.py
- *                      (default: ~/Apps/StrategyTerminal)
+ *                      (default: the bundled app at
+ *                       ~/.config/opencode/strategy-terminal, installed by
+ *                       install.sh; falls back to ~/Apps/StrategyTerminal)
  *   ST_CLI_PYTHON      python interpreter with the app's dependencies
  *                      (default: <app>/venv/bin/python, ~/venv/bin/python, python3)
  *   ST_CLI_SCRIPT      default app-cli.py
@@ -31,7 +33,18 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 
-const APP_DIR = process.env.ST_CLI_APP_DIR ?? path.join(homedir(), "Apps", "StrategyTerminal")
+const OPENCODE_DIR = process.env.OPENCODE_CONFIG_DIR ?? path.join(homedir(), ".config", "opencode")
+const BUNDLED_APP_DIR = path.join(OPENCODE_DIR, "strategy-terminal")
+const LEGACY_APP_DIR = path.join(homedir(), "Apps", "StrategyTerminal")
+
+/** App folder: env override, else the bundled copy, else the legacy app folder. */
+function resolveAppDir(): string {
+  if (process.env.ST_CLI_APP_DIR) return process.env.ST_CLI_APP_DIR
+  if (existsSync(path.join(BUNDLED_APP_DIR, "app-cli.py"))) return BUNDLED_APP_DIR
+  return LEGACY_APP_DIR
+}
+
+const APP_DIR = resolveAppDir()
 const SCRIPT = process.env.ST_CLI_SCRIPT ?? "app-cli.py"
 const TIMEOUT_MS = Number(process.env.ST_CLI_TIMEOUT_MS ?? 240_000)
 const MAX_OUTPUT = 200_000

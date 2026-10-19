@@ -25,49 +25,54 @@ the public data sources (yfinance, CoinGecko, GDELT, RSS, World Bank).
 | `plugins/strategy-terminal.ts` | OpenCode plugin exposing the `st.run` / `st.commands` tools |
 | `commands/st.md` | The `/st <args>` slash command |
 | `bin/st.sh` | Wrapper the slash command runs |
-| `app-cli/app-cli.py` | Headless CLI the plugin drives (part of the StrategyTerminal app) |
-| `app-cli/pdf2png.py` | Rasterises PDF pages to PNG so reports can be shown inline |
-| `install.sh` | Copies everything into `~/.config/opencode` |
+| `app-cli/` | **Self-contained** command engine (`app-cli.py` plus the `terminal`, `features`, `config`, `database`, `chat`, `rag` and `terminal_pdf` modules) |
+| `install.sh` | Copies the plugin and the bundled app into `~/.config/opencode` |
 
 ## Requirements
 
-- **The StrategyTerminal app**, because `app-cli.py` reuses its command engine
-  (`terminal.py`, `features.py`, `config.py`, `database.py`, `terminal_pdf.py`).
-  `app-cli.py` must sit in the app folder (default `~/Apps/StrategyTerminal`).
-- Python with the app's dependencies:
-  `streamlit plotly yfinance pandas numpy rich reportlab pymupdf kaleido bs4 requests`
+- Python 3 with the engine's dependencies:
+  `numpy pandas plotly requests scipy scikit-learn reportlab pymupdf kaleido`
+  (and `yfinance` for market data).
 - Optional, for PNG chart export: `kaleido` plus a Chrome build
-  (`plotly_get_chrome` installs one).
+  (`plotly_get_chrome -y` installs one).
+
+No separate StrategyTerminal checkout is needed — `app-cli/` is bundled.
 
 ## Install
 
 ```bash
-./install.sh                 # copy into ~/.config/opencode
+./install.sh                 # install plugin + bundled app into ~/.config/opencode
 ./install.sh --dry-run       # see what it would do
 ```
+
+The installer places the self-contained engine in
+`~/.config/opencode/strategy-terminal/`, so it works without a
+`~/Apps/StrategyTerminal` checkout.
 
 Manual install:
 
 ```bash
 cp plugins/strategy-terminal.ts ~/.config/opencode/plugins/
 cp commands/st.md              ~/.config/opencode/commands/
-mkdir -p ~/.config/opencode/bin
+mkdir -p ~/.config/opencode/bin ~/.config/opencode/strategy-terminal
 cp bin/st.sh                   ~/.config/opencode/bin/ && chmod +x ~/.config/opencode/bin/st.sh
+cp app-cli/*.py                ~/.config/opencode/strategy-terminal/
 ```
 
 Restart OpenCode (or wait for the config watcher to reload), then `/st AAPL`.
 
 ## Configure
 
-Nothing is required if the app lives in `~/Apps/StrategyTerminal` and a venv
-sits at `~/venv` or inside the app folder. Otherwise set:
+Nothing is required after `./install.sh`; the bundled app is used
+automatically. If you keep a venv, point at it, or override the app folder:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `ST_CLI_APP_DIR` | folder containing `app-cli.py` | `~/Apps/StrategyTerminal` |
+| `ST_CLI_APP_DIR` | folder containing `app-cli.py` | bundled `~/.config/opencode/strategy-terminal`, else `~/Apps/StrategyTerminal` |
 | `ST_CLI_PYTHON` | interpreter with the app's dependencies | `<app>/venv/bin/python`, `<app>/.venv/bin/python`, `~/venv/bin/python`, `python3` |
 | `ST_CLI_SCRIPT` | CLI file name | `app-cli.py` |
 | `ST_CLI_TIMEOUT_MS` | per-command timeout | `240000` |
+| `OPENCODE_CONFIG_DIR` | OpenCode config location | `~/.config/opencode` |
 
 API keys are **optional** and are read by `app-cli.py` from environment
 variables only (nothing is written into this plugin, and the plugin never
@@ -80,6 +85,7 @@ export ALPHA_VANTAGE_API_KEY=...
 export POLYGON_API_KEY=...        # enables IV AAPL
 export NEWSAPI_KEY=...
 export FINNHUB_API_KEY=...
+export OPENROUTER_API_KEY=...     # enables the OpenRouter chat provider
 ```
 
 Sources that need no key at all: yfinance, CoinGecko, GDELT, RSS feeds,
@@ -125,8 +131,8 @@ Any other `app-cli.py` flag can be passed through in the same way.
 
 | Symptom | Fix |
 |---|---|
-| `app-cli.py not found in …` | set `ST_CLI_APP_DIR` to the app folder |
-| `ModuleNotFoundError: streamlit` (or plotly/pandas) | point `ST_CLI_PYTHON` at the venv that has the app's dependencies |
+| `app-cli.py not found in …` | re-run `./install.sh`, or set `ST_CLI_APP_DIR` to the app folder |
+| `ModuleNotFoundError` (numpy/pandas/plotly/reportlab/…) | point `ST_CLI_PYTHON` at an interpreter that has the dependencies listed above |
 | charts missing, `chart not rendered as image` | install `kaleido` and run `plotly_get_chrome -y` in that venv |
 | plugin not visible in OpenCode | restart OpenCode; check `~/.local/share/opencode/log/opencode.log` for `strategy-terminal` |
 | `--show` did not open a browser | check `DISPLAY`/`WAYLAND_DISPLAY`/`BROWSER`; the PDF is still written next to the PNGs |
@@ -138,6 +144,7 @@ Any other `app-cli.py` flag can be passed through in the same way.
 rm ~/.config/opencode/plugins/strategy-terminal.ts \
    ~/.config/opencode/commands/st.md \
    ~/.config/opencode/bin/st.sh
+rm -rf ~/.config/opencode/strategy-terminal
 ```
 
 ## Notes
