@@ -81,7 +81,7 @@ WORLD_INDICES = [
     ('Russell 2000','^RUT'),   ('FTSE 100',    '^FTSE'),  ('DAX',        '^GDAXI'),
     ('CAC 40',      '^FCHI'),  ('Nikkei 225',  '^N225'),  ('Hang Seng',  '^HSI'),
     ('Shanghai',    '000001.SS'),('ASX 200',   '^AXJO'),  ('KOSPI',      '^KS11'),
-    ('VIX',         '^VIX'),   ('MOVE Index',  '^TNX'),
+    ('VIX',         '^VIX'),   ('MOVE Index',  '^MOVE'),
 ]
 
 # Cash index symbol → (futures label, futures symbol). Used by WEI to show
@@ -483,6 +483,13 @@ def _yf_history(symbol: str, period: str = '1y', interval: str = '1d'):
     try:
         t = yf.Ticker(symbol)
         df = t.history(period=period, interval=interval, auto_adjust=True)
+        if df.empty: return pd.DataFrame()
+        # yfinance emits a placeholder bar for the session currently in progress:
+        # OHLC are NaN but Volume is already populated, so dropna(how='all')
+        # will NOT remove it. Drop every row with a missing Close instead —
+        # otherwise each downstream `iloc[-1]` reads a NaN and renders "nan" /
+        # "+nan%" (observed on ^GSPC / ^IXIC / ^DJI before the US open).
+        df = df[df['Close'].notna()]
         if df.empty: return pd.DataFrame()
         df.index = pd.to_datetime(df.index)
         if df.index.tz is not None:
@@ -1189,11 +1196,16 @@ def cmd_chart(ticker: str, period: str, api_keys: dict):
     name = _safe_get(info,'longName','shortName', default=ticker)
     st.plotly_chart(_candlestick_chart(df, f"{ticker} — {name} ({period})", height=600),
                     use_container_width=True)
-    # Key stats below chart
-    latest = df['Close'].iloc[-1]
-    ret_1d = (df['Close'].iloc[-1]/df['Close'].iloc[-2]-1)*100 if len(df)>1 else 0
-    ret_tot = (df['Close'].iloc[-1]/df['Close'].iloc[0]-1)*100
-    vol = df['Close'].pct_change().std() * np.sqrt(252) * 100
+    # Key stats below chart. Drop trailing empty bars first: yfinance publishes a
+    # placeholder row for the current session on some feeds (US cash indices
+    # before the open), so a raw iloc[-1] can be NaN and poison the metrics.
+    _cl = df['Close'].dropna()
+    if len(_cl) == 0:
+        st.error(f"No usable closes for {ticker}"); return
+    latest = _cl.iloc[-1]
+    ret_1d = (_cl.iloc[-1]/_cl.iloc[-2]-1)*100 if len(_cl)>1 else 0
+    ret_tot = (_cl.iloc[-1]/_cl.iloc[0]-1)*100
+    vol = _cl.pct_change().std() * np.sqrt(252) * 100
     c1,c2,c3,c4 = st.columns(4)
     c1.metric("Latest Close", f"{latest:,.4f}")
     c2.metric("1D Change",    f"{ret_1d:+.2f}%")
@@ -1671,9 +1683,14 @@ def cmd_wei(api_keys: dict):
     st.markdown(f"<div class='term-header'>🌍  WEI — WORLD EQUITY INDICES</div>",
                 unsafe_allow_html=True)
     rows = []
+    have = set()
     syms = [sym for _, sym in WORLD_INDICES]
     try:
-        data = yf.download(syms, period='2d', interval='1d', progress=False, auto_adjust=True)
+        # period='2d' is not enough: every index sits on a different exchange
+        # calendar, so a 2-day union window leaves only ONE valid close per
+        # symbol and the len(closes) >= 2 test below can never pass. Use 5d so
+        # each symbol has at least two real closes.
+        data = yf.download(syms, period='5d', interval='1d', progress=False, auto_adjust=True)
         for name, sym in WORLD_INDICES:
             try:
                 closes = data['Close'][sym].dropna()
@@ -1683,16 +1700,30 @@ def cmd_wei(api_keys: dict):
                     chg_p = chg / prev * 100
                     rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
                                  'Chg': chg, 'Chg%': chg_p})
+                    have.add(sym)
             except: pass
     except: pass
-    if not rows:
-        for name, sym in WORLD_INDICES:
-            df = _yf_history(sym, period='5d')
-            if not df.empty and len(df) >= 2:
-                prev, last = float(df['Close'].iloc[-2]), float(df['Close'].iloc[-1])
-                chg  = last - prev; chg_p = chg / prev * 100
-                rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
-                             'Chg': chg, 'Chg%': chg_p})
+    # Backfill whatever the batch missed. yf.download regularly returns a partial
+    # frame for a 14-symbol multi-exchange request, so an all-or-nothing
+    # `if not rows:` fallback silently drops whole regions from the board.
+    for name, sym in WORLD_INDICES:
+        if sym in have:
+            continue
+        df = _yf_history(sym, period='5d')
+        if df.empty:
+            continue
+        # Drop the empty trailing bar yfinance emits for the current session
+        # (US cash indices before the open) before taking the last two closes.
+        closes = df['Close'].dropna()
+        if len(closes) >= 2:
+            prev, last = float(closes.iloc[-2]), float(closes.iloc[-1])
+            chg  = last - prev; chg_p = chg / prev * 100
+            rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
+                         'Chg': chg, 'Chg%': chg_p})
+            have.add(sym)
+    # Keep the board in WORLD_INDICES order whichever path supplied each row.
+    _order = {sym: i for i, (_, sym) in enumerate(WORLD_INDICES)}
+    rows.sort(key=lambda r: _order.get(r['Symbol'], 99))
     if not rows: st.error("Could not fetch index data."); return
 
     # ── Attach matching index futures + implied cash open ────────────────────

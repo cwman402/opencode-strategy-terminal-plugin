@@ -2904,8 +2904,11 @@ def cmd_ind(parts: list, api_keys: dict):
                 unsafe_allow_html=True)
     syms = [sym for _, sym in INDICES_MAP]
     rows = []
+    have = set()
     try:
-        data = yf.download(syms, period='2d', interval='1d', progress=False, auto_adjust=True)
+        # period='2d' leaves only one valid close per symbol (different exchange
+        # calendars share no two common dates) — 5d gives every symbol >= 2.
+        data = yf.download(syms, period='5d', interval='1d', progress=False, auto_adjust=True)
         for name, sym in INDICES_MAP:
             try:
                 closes = data['Close'][sym].dropna()
@@ -2914,18 +2917,26 @@ def cmd_ind(parts: list, api_keys: dict):
                     chg = last - prev
                     chg_p = chg / prev * 100
                     rows.append({'Index': name, 'Last': f"{last:,.2f}", 'Chg': chg, 'Chg%': chg_p})
+                    have.add(sym)
             except: pass
     except: pass
-    if not rows:
-        for name, sym in INDICES_MAP:
-            try:
-                t = yf.Ticker(sym)
-                df = t.history(period='5d', interval='1d', auto_adjust=True)
-                if not df.empty and len(df) >= 2:
-                    prev, last = float(df['Close'].iloc[-2]), float(df['Close'].iloc[-1])
-                    chg = last - prev; chg_p = chg / prev * 100
-                    rows.append({'Index': name, 'Last': f"{last:,.2f}", 'Chg': chg, 'Chg%': chg_p})
-            except: pass
+    # Backfill gaps: a partial batch result must not hide whole regions.
+    for name, sym in INDICES_MAP:
+        if sym in have:
+            continue
+        try:
+            t = yf.Ticker(sym)
+            df = t.history(period='5d', interval='1d', auto_adjust=True)
+            if df.empty:
+                continue
+            # Drop yfinance's empty trailing bar for the live session.
+            closes = df['Close'].dropna()
+            if len(closes) >= 2:
+                prev, last = float(closes.iloc[-2]), float(closes.iloc[-1])
+                chg = last - prev; chg_p = chg / prev * 100
+                rows.append({'Index': name, 'Last': f"{last:,.2f}", 'Chg': chg, 'Chg%': chg_p})
+                have.add(sym)
+        except: pass
     if not rows:
         st.error("Could not fetch index data.")
         return
@@ -2967,8 +2978,13 @@ def _show_index_detail(ticker: str, api_keys: dict):
             st.error(f"No data for index: {ticker}")
             return
 
-        last = float(df['Close'].iloc[-1])
-        prev = float(df['Close'].iloc[-2]) if len(df) > 1 else last
+        # Drop yfinance's empty trailing bar for the live session.
+        _c = df['Close'].dropna()
+        if len(_c) == 0:
+            st.error(f"No usable closes for index: {ticker}")
+            return
+        last = float(_c.iloc[-1])
+        prev = float(_c.iloc[-2]) if len(_c) > 1 else last
         chg = last - prev
         chg_p = chg / prev * 100
         high_52w = float(df['Close'].max())
