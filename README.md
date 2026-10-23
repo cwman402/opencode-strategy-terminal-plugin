@@ -44,7 +44,7 @@ No separate StrategyTerminal checkout is needed — `app-cli/` is bundled.
 ```bash
 ./install.sh                 # plugin + skill + engine + /st + bin wrapper (default)
 ./install.sh --plugin-only   # only the st.* tools + the engine
-./install.sh --skill-only    # only the skill + the engine
+./install.sh --skill-only    # skill + engine + /st (no plugin)
 ./install.sh --dry-run       # show what would happen (combine with any mode)
 ```
 
@@ -52,7 +52,7 @@ No separate StrategyTerminal checkout is needed — `app-cli/` is bundled.
 |---|---|---|---|---|
 | default | plugin, skill, engine, command, bin | ✓ | ✓ | python3 + deps |
 | `--plugin-only` | plugin, engine | ✗ | ✓ | python3 + deps |
-| `--skill-only` | skill, engine | ✗ | ✗ | python3 + deps |
+| `--skill-only` | skill, engine, command, bin | ✓ | ✗ | python3 + deps |
 
 The installer places the self-contained engine in
 `~/.config/opencode/strategy-terminal/`, so it works without a
@@ -73,8 +73,8 @@ Restart OpenCode (or wait for the config watcher to reload), then `/st AAPL`.
 ## Skill (no plugin)
 
 `skills/strategy-terminal/` is a normal OpenCode skill: `SKILL.md` plus
-`scripts/st`, a runner with the same flag handling as the plugin. The agent
-loads it when a request looks like market data, then shells out:
+`scripts/st`, a runner with the same flag handling as the plugin. When loaded,
+the agent shells out:
 
 ```bash
 ~/.config/opencode/skills/strategy-terminal/scripts/st AAPL GP 6mo
@@ -88,12 +88,29 @@ checkout (the runner also finds `app-cli/` there, so no install is needed):
 { "skills": ["/path/to/opencode-strategy-terminal-plugin/skills"] }
 ```
 
-There is no `/skill-id` slash form — skills are model-invoked. To get a
-deterministic entry point, use the `/st` command (default install) or ask
-explicitly ("use the Strategy Terminal skill").
+### Invocation model — explicit only
 
-If both are installed the skill prefers the `st.run` tool and falls back to
-`scripts/st`; either way the output is the same engine.
+The skill ships with `metadata.opencode/autoinvoke: false`, so it is **hidden
+from the model's auto-invoke list**. It does not fire on generic phrases like
+"help", "what's the market doing" or a bare ticker; the two ways in are:
+
+1. **`/st <command>`** — the deterministic, plugin-style entry point (default
+   install). The command loads the skill for presentation rules and injects the
+   engine output.
+2. **Naming it** — "use the strategy-terminal skill" / "load skill
+   strategy-terminal". The id is `strategy-terminal`.
+
+If you want the model to be able to select it on its own again, flip the
+frontmatter back to `true` and reinstall. To keep auto-selection but require
+approval, leave it `true` and add a permission instead:
+
+```jsonc
+// ~/.config/opencode/opencode.json
+{ "permissions": { "skill": { "strategy-terminal": "ask", "*": "allow" } } }
+```
+
+If both plugin and skill are installed, the skill prefers the `st.run` tool and
+falls back to `scripts/st`; either way the output is the same engine.
 
 ## Configure
 

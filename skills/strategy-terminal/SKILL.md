@@ -1,8 +1,10 @@
 ---
 name: Strategy Terminal
-description: Pull live market data from the StrategyTerminal engine (scripts/st) — ticker overviews and price charts, movers, FX, crypto, rates, commodities, sectors, indices, volatility/IV, options, credit spreads, macro (FRED/World Bank), news and sentiment, earnings, analyst ratings, short interest, insider trades, correlations, risk/returns, screener, watchlist and P&L. Use whenever the user asks for a quote, chart, market or macro read, news headlines, or portfolio numbers.
+description: Explicit-invocation only. Load this when the user types /st, runs a Strategy Terminal command, or names this skill. Do not auto-load it for generic market or quote questions — use the st.run tool or /st instead.
 metadata:
-  opencode/autoinvoke: true
+  # Hidden from the model's auto-invoke list: the skill is reachable only when a
+  # command (/st) or the user names it. Remove this to restore auto-selection.
+  opencode/autoinvoke: false
 ---
 
 # Strategy Terminal — command skill

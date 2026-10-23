@@ -3,7 +3,7 @@
 #
 #   ./install.sh                 plugin + skill + engine + /st command + bin wrapper
 #   ./install.sh --plugin-only   the two st.* tools + the engine
-#   ./install.sh --skill-only    the skill + the engine (no plugin, no /st)
+#   ./install.sh --skill-only    the skill + engine + /st (no plugin)
 #   ./install.sh --dry-run       show what would happen (combine with any mode)
 #
 # Everything lands under ~/.config/opencode (override with OPENCODE_CONFIG_DIR).
@@ -25,8 +25,8 @@ usage() {
   (no flag)       plugin + skill + engine + /st command + bin wrapper  ← default
   --plugin-only   only plugins/strategy-terminal.ts + the engine
                   (st.run / st.commands tools; no skill, no /st)
-  --skill-only    only skills/strategy-terminal + the engine
-                  (agent runs scripts/st; no plugin, no /st)
+  --skill-only    only skills/strategy-terminal + the engine + the /st command
+                  (no plugin; /st loads the skill and runs scripts/st)
   --dry-run       print the actions without performing them
 
   OPENCODE_CONFIG_DIR=/path   install into a different config directory
@@ -51,7 +51,7 @@ NEED_PLUGIN=false NEED_SKILL=false NEED_EXTRAS=false
 case "$MODE" in
   all)    NEED_PLUGIN=true NEED_SKILL=true NEED_EXTRAS=true ;;
   plugin) NEED_PLUGIN=true ;;
-  skill)  NEED_SKILL=true ;;
+  skill)  NEED_SKILL=true NEED_EXTRAS=true ;;
 esac
 
 run() {
@@ -169,11 +169,13 @@ EOF
     ;;
   skill)
     cat <<EOF
-  2. Skills hot-reload — usually no restart needed. Ask:
-       "AAPL 現在多少？出張 6 個月圖"
-     or run it yourself:
+  2. Skills hot-reload — usually no restart needed. Try:
+       /st AAPL
+       /st VOL TSLA 6mo
+     The skill is explicit-only (autoinvoke: false); /st or naming
+     "strategy-terminal" is what loads it. No plugin tools in this mode.
+     Or run it yourself:
        $SKILL_DIR/scripts/st --list-commands | head
-     (skill only — no tools, no /st command)
 EOF
     ;;
 esac

@@ -1,6 +1,10 @@
 ---
 description: Run a Strategy Terminal command (e.g. /st AAPL GP 1y, /st WEI --show)
 ---
+Load the `strategy-terminal` skill first (skill tool, id: `strategy-terminal`) — it carries the
+command families and presentation rules. It is hidden from auto-invocation, so this command and an
+explicit request are the only ways in.
+
 Terminal output for the command `$ARGUMENTS`:
 
 !`~/.config/opencode/bin/st.sh "$ARGUMENTS"`
