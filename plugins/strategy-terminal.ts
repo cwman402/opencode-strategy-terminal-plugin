@@ -84,7 +84,9 @@ type RunInput = {
 type ToolOutput = { text: string; images: string[]; code: number }
 
 const RUN_DESCRIPTION =
-  "Run a Strategy Terminal command. Examples: \"AAPL\" (overview), \"AAPL GP 6mo\" " +
+  "Run one Strategy Terminal command. Invoke only when the user explicitly asks for market data, " +
+  "or invokes Strategy Terminal with /st. A bare word in chat — \"help\", \"wei\", a lone ticker — " +
+  "is not an invocation: ask before running anything. Examples: \"AAPL\" (overview), \"AAPL GP 6mo\" " +
   "(price chart), \"AAPL FA\"/\"AAPL NEWS\"/\"AAPL OPT\"/\"AAPL DVD\", \"AAPL COMP MSFT AMD\", " +
   "\"WEI\" (world indices), \"MOVERS gainers\", \"FX\", \"CRYPTO\", \"CRYPTO TOP\", " +
   "\"COIN bitcoin\", \"RATES\", \"CMDTY\", \"SECTOR\", \"ECON\", \"ECON GLOBAL\", " +
@@ -92,7 +94,7 @@ const RUN_DESCRIPTION =
   "\"IND SPX\", \"WB\", \"OAS HY\", \"OASD 1-3Y\", \"VOL TSLA 6mo\", \"IV AAPL\", " +
   "\"RISK NVDA\", \"TRA AAPL SPY 5y\", \"ANR AAPL\", \"RV AAPL\", \"SHORT AAPL\", " +
   "\"INSIDER AAPL\", \"IPO\", \"TOP\", \"ECAL\", \"SCREEN\", \"SEARCH apple\", " +
-  "\"WL\"/\"PNL\"/\"PORT\"/\"LIST ALERT\" (need `user`), \"HELP\". " +
+  "\"WL\"/\"PNL\"/\"PORT\"/\"LIST ALERT\" (need `user`), \"--list-commands\" (full reference). " +
   "Runs anonymously unless `user` is given. Chart images come back with the result."
 
 const COMMANDS_DESCRIPTION =

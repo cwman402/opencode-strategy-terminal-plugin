@@ -14,6 +14,11 @@ come from a command you actually ran — never from memory, and never estimated.
 
 ## 0. Always run a command first
 
+Invocation boundary: this protocol applies to the invocation that loaded it (the `/st` command or
+an explicit request). In later chat messages, run the engine only when the user asks for data or
+types another `/st` — a bare `help`, `wei`, or lone ticker is conversation first; ask instead of
+assuming.
+
 | Need | Command |
 |---|---|
 | quote / overview | `"$ST" AAPL` |

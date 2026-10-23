@@ -109,6 +109,21 @@ approval, leave it `true` and add a permission instead:
 { "permissions": { "skill": { "strategy-terminal": "ask", "*": "allow" } } }
 ```
 
+### Why a bare `help` can still look like an invocation
+
+Two leftovers, both now fenced off:
+
+- **A loaded skill stays in context for the rest of the session.** `autoinvoke: false` only
+  stops *new* auto-loads; after one `/st` the protocol body is still there. `SKILL.md` now says
+  the protocol applies to the invocation that loaded it, and that bare words are conversation
+  first. `/new` clears a loaded skill.
+- **The `st.run` tool description used to list `"HELP"` as an example**, which made the bare word
+  a plausible match. It now says: invoke only on an explicit data request or `/st`, and lists
+  `--list-commands` instead of `HELP` as the reference command.
+
+Neither of those is OpenCode translating text into a slash command — plain text never becomes
+`/st`. It is the model choosing to call a tool because of those two texts.
+
 If both plugin and skill are installed, the skill prefers the `st.run` tool and
 falls back to `scripts/st`; either way the output is the same engine.
 
