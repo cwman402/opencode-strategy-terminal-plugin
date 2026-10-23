@@ -1,8 +1,8 @@
 # Strategy Terminal plugin for OpenCode
 
 Market data, technicals, macro, news and risk commands from the
-**StrategyTerminal** app, available inside OpenCode as tools and as a
-`/st` slash command.
+**StrategyTerminal** app, available inside OpenCode as tools, as a `/st`
+slash command, and as a **self-contained skill** that needs no plugin.
 
 ```
 /st AAPL                    overview: price, stats, 1Y chart
@@ -23,10 +23,11 @@ the public data sources (yfinance, CoinGecko, GDELT, RSS, World Bank).
 | Path | Purpose |
 |---|---|
 | `plugins/strategy-terminal.ts` | OpenCode plugin exposing the `st.run` / `st.commands` tools |
+| `skills/strategy-terminal/` | The skill: `SKILL.md` + `scripts/st` runner (works without the plugin) |
 | `commands/st.md` | The `/st <args>` slash command |
-| `bin/st.sh` | Wrapper the slash command runs |
+| `bin/st.sh` | Shim the slash command runs; forwards to the skill's runner |
 | `app-cli/` | **Self-contained** command engine (`app-cli.py` plus the `terminal`, `features`, `config`, `database`, `chat`, `rag` and `terminal_pdf` modules) |
-| `install.sh` | Copies the plugin and the bundled app into `~/.config/opencode` |
+| `install.sh` | Installs any subset: plugin, skill, or both (plus `/st`) |
 
 ## Requirements
 
@@ -41,15 +42,23 @@ No separate StrategyTerminal checkout is needed — `app-cli/` is bundled.
 ## Install
 
 ```bash
-./install.sh                 # install plugin + bundled app into ~/.config/opencode
-./install.sh --dry-run       # see what it would do
+./install.sh                 # plugin + skill + engine + /st + bin wrapper (default)
+./install.sh --plugin-only   # only the st.* tools + the engine
+./install.sh --skill-only    # only the skill + the engine
+./install.sh --dry-run       # show what would happen (combine with any mode)
 ```
+
+| Mode | Installs | `/st` | Tools | Needs |
+|---|---|---|---|---|
+| default | plugin, skill, engine, command, bin | ✓ | ✓ | python3 + deps |
+| `--plugin-only` | plugin, engine | ✗ | ✓ | python3 + deps |
+| `--skill-only` | skill, engine | ✗ | ✗ | python3 + deps |
 
 The installer places the self-contained engine in
 `~/.config/opencode/strategy-terminal/`, so it works without a
-`~/Apps/StrategyTerminal` checkout.
+`~/Apps/StrategyTerminal` checkout. Both modes share that one engine copy.
 
-Manual install:
+Manual install (plugin + `/st`, the old behaviour):
 
 ```bash
 cp plugins/strategy-terminal.ts ~/.config/opencode/plugins/
@@ -61,6 +70,31 @@ cp app-cli/*.py                ~/.config/opencode/strategy-terminal/
 
 Restart OpenCode (or wait for the config watcher to reload), then `/st AAPL`.
 
+## Skill (no plugin)
+
+`skills/strategy-terminal/` is a normal OpenCode skill: `SKILL.md` plus
+`scripts/st`, a runner with the same flag handling as the plugin. The agent
+loads it when a request looks like market data, then shells out:
+
+```bash
+~/.config/opencode/skills/strategy-terminal/scripts/st AAPL GP 6mo
+```
+
+Install it alone with `./install.sh --skill-only`, or point a config at the
+checkout (the runner also finds `app-cli/` there, so no install is needed):
+
+```jsonc
+// ~/.config/opencode/opencode.json
+{ "skills": ["/path/to/opencode-strategy-terminal-plugin/skills"] }
+```
+
+There is no `/skill-id` slash form — skills are model-invoked. To get a
+deterministic entry point, use the `/st` command (default install) or ask
+explicitly ("use the Strategy Terminal skill").
+
+If both are installed the skill prefers the `st.run` tool and falls back to
+`scripts/st`; either way the output is the same engine.
+
 ## Configure
 
 Nothing is required after `./install.sh`; the bundled app is used
@@ -68,7 +102,7 @@ automatically. If you keep a venv, point at it, or override the app folder:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `ST_CLI_APP_DIR` | folder containing `app-cli.py` | bundled `~/.config/opencode/strategy-terminal`, else `~/Apps/StrategyTerminal` |
+| `ST_CLI_APP_DIR` | folder containing `app-cli.py` | bundled `~/.config/opencode/strategy-terminal`, else the checkout's `app-cli/`, else `~/Apps/StrategyTerminal` |
 | `ST_CLI_PYTHON` | interpreter with the app's dependencies | `<app>/venv/bin/python`, `<app>/.venv/bin/python`, `~/venv/bin/python`, `python3` |
 | `ST_CLI_SCRIPT` | CLI file name | `app-cli.py` |
 | `ST_CLI_TIMEOUT_MS` | per-command timeout | `240000` |
@@ -135,17 +169,28 @@ Any other `app-cli.py` flag can be passed through in the same way.
 | `ModuleNotFoundError` (numpy/pandas/plotly/reportlab/…) | point `ST_CLI_PYTHON` at an interpreter that has the dependencies listed above |
 | charts missing, `chart not rendered as image` | install `kaleido` and run `plotly_get_chrome -y` in that venv |
 | plugin not visible in OpenCode | restart OpenCode; check `~/.local/share/opencode/log/opencode.log` for `strategy-terminal` |
+| skill not offered to the agent | confirm `~/.config/opencode/skills/strategy-terminal/SKILL.md` exists and has a `description`; skills reload without a restart |
+| skill runs but `app-cli.py not found` | set `ST_CLI_APP_DIR`, or re-run `./install.sh --skill-only` to place the bundled engine |
 | `--show` did not open a browser | check `DISPLAY`/`WAYLAND_DISPLAY`/`BROWSER`; the PDF is still written next to the PNGs |
 | a command hangs | it is fetching many tickers; raise `ST_CLI_TIMEOUT_MS` |
 
 ## Uninstall
 
 ```bash
+# everything
 rm ~/.config/opencode/plugins/strategy-terminal.ts \
    ~/.config/opencode/commands/st.md \
    ~/.config/opencode/bin/st.sh
-rm -rf ~/.config/opencode/strategy-terminal
+rm -rf ~/.config/opencode/skills/strategy-terminal \
+       ~/.config/opencode/strategy-terminal
+
+# or drop just one half
+rm ~/.config/opencode/plugins/strategy-terminal.ts            # plugin gone, skill stays
+rm -rf ~/.config/opencode/skills/strategy-terminal            # skill gone, plugin stays
 ```
+
+The engine at `~/.config/opencode/strategy-terminal` is shared, so remove it only
+when neither half is needed.
 
 ## Notes
 
