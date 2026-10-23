@@ -537,6 +537,92 @@ def _us_session():
         return 'AH'
     return 'CLOSED'
 
+# Exchange timezone per cash index — used for session-aware day changes.
+INDEX_TZ = {
+    '^GSPC': 'America/New_York', '^IXIC': 'America/New_York',
+    '^DJI': 'America/New_York',  '^RUT': 'America/New_York',
+    '^VIX': 'America/New_York',  '^MOVE': 'America/New_York',
+    '^FTSE': 'Europe/London',    '^GDAXI': 'Europe/Berlin',
+    '^FCHI': 'Europe/Paris',     '^N225': 'Asia/Tokyo',
+    '^HSI': 'Asia/Hong_Kong',    '000001.SS': 'Asia/Shanghai',
+    '^AXJO': 'Australia/Sydney', '^KS11': 'Asia/Seoul',
+}
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _intraday_sessions(symbol: str) -> dict:
+    """{session date (exchange-local): last 5-minute close} for the past 5 days."""
+    if not _YF_OK: return {}
+    try:
+        h = yf.Ticker(symbol).history(period='5d', interval='5m', auto_adjust=False)
+        h = h[h['Close'].notna()]
+        if h.empty: return {}
+        tz = INDEX_TZ.get(symbol)
+        if tz and ZoneInfo is not None:
+            if h.index.tz is None:
+                h.index = h.index.tz_localize('UTC').tz_convert(tz)
+            else:
+                h.index = h.index.tz_convert(tz)
+        sessions = h.groupby(h.index.date)['Close'].last()
+        return {d: float(v) for d, v in sessions.items()}
+    except Exception:
+        return {}
+
+def _last_two_sessions(symbol: str, closes) -> tuple:
+    """(last, prev, last session date) using that exchange's own calendar.
+
+    Comparing the final two *daily* rows is only correct when no session is
+    missing between them. yfinance sometimes drops a session for cash indices
+    (^GSPC 2026-10-21 while SPY traded that day): the pair then spans two
+    sessions and the printed day change is roughly halved. If a weekday is
+    absent between the last two daily bars, rebuild the previous close from
+    5-minute bars; a real holiday simply has no intraday session, so nothing
+    changes.
+    """
+    last = float(closes.iloc[-1])
+    prev = float(closes.iloc[-2])
+    d_last = pd.Timestamp(closes.index[-1]).date()
+    d_prev = pd.Timestamp(closes.index[-2]).date()
+    if d_last > d_prev:
+        missing = list(pd.bdate_range(d_prev, d_last))[1:-1]
+        if missing:
+            sessions = _intraday_sessions(symbol)
+            between = [d for d in sessions if d_prev < d < d_last]
+            if between:
+                d_prev = max(between)
+                prev = sessions[d_prev]
+    return last, prev, d_last
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _futures_since_cash_close(fut_symbol: str, close_date) -> tuple:
+    """(last futures price, % move since the 16:00 ET cash close).
+
+    A futures *daily* change is measured from the previous settlement, while
+    the cash close on screen already contains that move — applying one to the
+    other double-counts the session. The overnight move is what happened after
+    16:00 ET, which is what an implied open should carry.
+    """
+    if not _YF_OK: return None, None
+    try:
+        tz = ZoneInfo('America/New_York') if ZoneInfo is not None else None
+        h = yf.Ticker(fut_symbol).history(period='2d', interval='5m', auto_adjust=False)
+        h = h[h['Close'].notna()]
+        if h.empty: return None, None
+        if tz is not None:
+            h.index = (h.index.tz_localize('UTC').tz_convert(tz) if h.index.tz is None
+                       else h.index.tz_convert(tz))
+        last = float(h['Close'].iloc[-1])
+        target = pd.Timestamp(close_date)
+        target = target.tz_localize(tz) if (tz is not None and target.tz is None) else target
+        target = target.replace(hour=16, minute=0, second=0)
+        base_rows = h[h.index <= target]
+        if base_rows.empty: return last, None
+        base = float(base_rows['Close'].iloc[-1])
+        if not base: return last, None
+        return last, (last - base) / base * 100
+    except Exception:
+        return None, None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _yf_info(symbol: str) -> dict:
     if not _YF_OK: return {}
@@ -1683,44 +1769,43 @@ def cmd_wei(api_keys: dict):
     st.markdown(f"<div class='term-header'>🌍  WEI — WORLD EQUITY INDICES</div>",
                 unsafe_allow_html=True)
     rows = []
-    have = set()
     syms = [sym for _, sym in WORLD_INDICES]
+    closes_by_sym = {}
     try:
         # period='2d' is not enough: every index sits on a different exchange
         # calendar, so a 2-day union window leaves only ONE valid close per
         # symbol and the len(closes) >= 2 test below can never pass. Use 5d so
         # each symbol has at least two real closes.
         data = yf.download(syms, period='5d', interval='1d', progress=False, auto_adjust=True)
-        for name, sym in WORLD_INDICES:
+        for _, sym in WORLD_INDICES:
             try:
                 closes = data['Close'][sym].dropna()
                 if len(closes) >= 2:
-                    prev, last = float(closes.iloc[-2]), float(closes.iloc[-1])
-                    chg  = last - prev
-                    chg_p = chg / prev * 100
-                    rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
-                                 'Chg': chg, 'Chg%': chg_p})
-                    have.add(sym)
-            except: pass
-    except: pass
+                    closes_by_sym[sym] = closes
+            except Exception:
+                pass
+    except Exception:
+        pass
     # Backfill whatever the batch missed. yf.download regularly returns a partial
     # frame for a 14-symbol multi-exchange request, so an all-or-nothing
     # `if not rows:` fallback silently drops whole regions from the board.
     for name, sym in WORLD_INDICES:
-        if sym in have:
+        closes = closes_by_sym.get(sym)
+        if closes is None:
+            df = _yf_history(sym, period='5d')
+            closes = df['Close'].dropna() if not df.empty else None
+        if closes is None or len(closes) < 2:
             continue
-        df = _yf_history(sym, period='5d')
-        if df.empty:
+        # Compare against the previous session on that exchange's own calendar,
+        # not simply the previous row: a dropped daily bar would otherwise make
+        # the change span two sessions (see _last_two_sessions).
+        last, prev, d_last = _last_two_sessions(sym, closes)
+        if not prev:
             continue
-        # Drop the empty trailing bar yfinance emits for the current session
-        # (US cash indices before the open) before taking the last two closes.
-        closes = df['Close'].dropna()
-        if len(closes) >= 2:
-            prev, last = float(closes.iloc[-2]), float(closes.iloc[-1])
-            chg  = last - prev; chg_p = chg / prev * 100
-            rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
-                         'Chg': chg, 'Chg%': chg_p})
-            have.add(sym)
+        chg = last - prev
+        rows.append({'Index': name, 'Symbol': sym, 'Last': f"{last:,.2f}",
+                     'Prev': prev, 'Date': d_last,
+                     'Chg': chg, 'Chg%': chg / prev * 100})
     # Keep the board in WORLD_INDICES order whichever path supplied each row.
     _order = {sym: i for i, (_, sym) in enumerate(WORLD_INDICES)}
     rows.sort(key=lambda r: _order.get(r['Symbol'], 99))
@@ -1732,17 +1817,23 @@ def cmd_wei(api_keys: dict):
         meta = INDEX_FUTURES.get(r['Symbol'])
         if not meta: continue
         fut_lbl, fut_sym = meta
-        f_last, f_prev = _yf_last_prev(fut_sym)
-        if f_last is None or not f_prev: continue
-        f_chg_p = (f_last - f_prev) / f_prev * 100
+        f_last, f_chg_p = _futures_since_cash_close(fut_sym, r['Date'])
         try:
             cash_last = float(r['Last'].replace(',', ''))
         except ValueError:
             continue
+        if f_last is None or f_chg_p is None:
+            # No intraday futures: fall back to the daily change, but apply it to
+            # the *previous* cash close so the move is not counted twice.
+            f_last, f_prev = _yf_last_prev(fut_sym)
+            if f_last is None or not f_prev: continue
+            f_chg_p = (f_last - f_prev) / f_prev * 100
+            r['ImpliedOpen'] = r['Prev'] * (1 + f_chg_p / 100)
+        else:
+            r['ImpliedOpen'] = cash_last * (1 + f_chg_p / 100)
         r['Fut']         = fut_lbl
         r['FutLast']     = f_last
         r['FutChg%']     = f_chg_p
-        r['ImpliedOpen'] = cash_last * (1 + f_chg_p / 100)
 
     c1, c2, c3, c4 = st.columns(4)
     for i, r in enumerate(rows):
@@ -1778,8 +1869,9 @@ def cmd_wei(api_keys: dict):
             f"<div style='color:{color};font-family:monospace;font-size:12px'>{arrow} {r['Chg%']:+.2f}%</div>"
             f"{fut_html}"
             f"</div>", unsafe_allow_html=True)
-    st.caption("Futures = overnight index future (ES/NQ/YM/RTY). "
-               "Implied open = cash close × (1 + futures change). "
+    st.caption("Day change = latest session vs the previous session on that exchange's own calendar. "
+               "Futures = ES/NQ/YM/RTY, measured from the 16:00 ET cash close, so "
+               "implied open = cash close × (1 + post-close futures move). "
                "PRE-MKT shown when the US cash market has not opened yet.")
     # Heat map
     if rows:

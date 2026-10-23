@@ -198,5 +198,12 @@ when neither half is needed.
   (it runs the scheduler); the CLI and this plugin just manage alerts.
 - Commands that touch watchlist / P&L / portfolio / alerts need a local account
   (`--user-id N`, or log in once through `app-cli.py`).
+- **`WEI` session logic** — each index is compared with the previous session on
+  *its own* exchange calendar, so Asian and US closes are never paired by
+  accident. If yfinance drops a daily bar (`^GSPC` on 2026-10-21, for example)
+  the prior close is rebuilt from that symbol's 5-minute bars instead of
+  silently spanning two sessions. Futures and the implied open are measured
+  from the 16:00 ET cash close, not from the futures' previous settlement,
+  so the session's move is not counted twice.
 - Verified with OpenCode 1.18.x, which loads local plugins through two shapes;
   the plugin exports both (`setup` and `server`) so it works either way.
