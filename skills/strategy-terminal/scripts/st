@@ -14,8 +14,8 @@
 #
 # Configuration (all optional):
 #   ST_CLI_APP_DIR   folder containing app-cli.py
-#                    (default: the bundled app at
-#                     ~/.config/opencode/strategy-terminal, then the checkout's
+#                    (default: this package's engine/, then the installed app
+#                     under the OpenCode config folder, then the checkout's
 #                     app-cli/, then ~/Apps/StrategyTerminal)
 #   ST_CLI_PYTHON    python with the app's deps
 #                    (default <app>/venv/bin/python, <app>/.venv/bin/python,
@@ -23,12 +23,17 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+CONFIG_ROOT="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}"
+SHARED_APP="${XDG_CONFIG_HOME:-$HOME/.config}/strategy-terminal"
 
 if [ -n "${ST_CLI_APP_DIR:-}" ]; then
   APP_DIR="$ST_CLI_APP_DIR"
-elif [ -f "$CONFIG_DIR/strategy-terminal/app-cli.py" ]; then
-  APP_DIR="$CONFIG_DIR/strategy-terminal"
+elif [ -f "$HERE/../engine/app-cli.py" ]; then
+  APP_DIR="$(cd "$HERE/../engine" && pwd)"     # skill package layout
+elif [ -f "$SHARED_APP/app-cli.py" ]; then
+  APP_DIR="$SHARED_APP"                        # host-neutral install (Claude/Codex)
+elif [ -f "$CONFIG_ROOT/strategy-terminal/app-cli.py" ]; then
+  APP_DIR="$CONFIG_ROOT/strategy-terminal"     # OpenCode install
 elif [ -f "$HERE/../app-cli/app-cli.py" ]; then
   APP_DIR="$(cd "$HERE/../app-cli" && pwd)"   # running from the repository
 elif [ -f "$HERE/../../app-cli/app-cli.py" ]; then
@@ -88,7 +93,7 @@ while [ "$i" -lt "${#words[@]}" ]; do
         i=$((i + 1))
       fi
       ;;
-    --max-rows)
+    --max-rows|--keys-file|--out-dir|--pdf-path|--md-path|--press)
       # value flag: keep the pair together so it never leaks into the command
       if [ -n "$next" ]; then
         opts+=("$word" "$next")
@@ -97,6 +102,8 @@ while [ "$i" -lt "${#words[@]}" ]; do
       ;;
     --user-id=*|--email=*)
       identity+=("$word") ;;
+    --keys-file=*|--out-dir=*|--pdf-path=*|--md-path=*|--press=*)
+      opts+=("$word") ;;
     --*)           opts+=("$word") ;;
     *)             cmd_parts+=("$word") ;;
   esac
@@ -122,4 +129,5 @@ if [ "${#identity[@]}" -eq 0 ]; then
   identity=("--anonymous")
 fi
 
-exec "$PYTHON" app-cli.py "${identity[@]}" --no-save-data "${opts[@]}" "$cmd"
+"$PYTHON" app-cli.py "${identity[@]}" --no-save-data "${opts[@]}" "$cmd"
+exit $?
