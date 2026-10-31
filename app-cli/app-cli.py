@@ -27,18 +27,21 @@ Notes
 -----
 * The working directory is forced to this file's folder so `users.db`,
   `uploads/`, `logs/` resolve exactly like they do under Streamlit.
-* Credentials: `--email/--password` (or `$ST_CLI_PASSWORD`) are verified against
-  users.db; the first successful login is remembered in
-  `~/.config/strategy-terminal/cli.json` and reused.  `--user-id` skips the
-  password because the database is local; use `--anonymous` to skip login.
-* API keys come from the user's saved keys, then `--keys-file`, then
-  environment variables (`FRED_API_KEY`, `FMP_API_KEY`, `POLYGON_API_KEY`,
-  `NEWSAPI_KEY`, `ALPHA_VANTAGE_API_KEY`, `FINNHUB_API_KEY`, …).
+* Credentials: `--email/--password` are verified against users.db.  Nothing is
+  cached on disk.  `--user-id` skips the password because the database is local;
+  use `--anonymous` to skip login.
+* API keys come from the user's saved keys, then `--keys-file`, then the
+  optional local file `keys.json` in the config folder
+  (`<config-root>/strategy-terminal/keys.json`).  This CLI never reads API
+  keys or credentials from environment variables.
 * Buttons that gate output (e.g. "▶ Run Screen") are auto-pressed; the run is
   noted in the output.  `--no-autopress` disables that, `--press LABEL` forces
   any other button.
 * Charts are exported as PNG (plotly + kaleido + Chrome) and printed as
   markdown image links; `--no-images` falls back to text/sparkline summaries.
+  Each exported chart is also opened in the default browser, and a report PDF
+  (`--show`/`--pdf`) likewise; `--no-open-images` keeps the browser closed for
+  charts.
 * Price alerts are stored, but the e-mail scheduler only runs inside the
   Streamlit process (it needs a long-lived server) — the CLI only manages them.
 * Output artefacts (PNGs, CSV, PDF) go to `cli_out/<timestamp>/` by default.
@@ -62,9 +65,19 @@ from html.parser import HTMLParser
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(APP_DIR)
 
-SESSION_FILE = os.path.expanduser('~/.config/strategy-terminal/cli.json')
 DEFAULT_OUT_ROOT = os.path.join(APP_DIR, 'cli_out')
 DB_FILE = os.path.join(APP_DIR, 'users.db')
+
+# Local, user-owned configuration.  API keys are read only from here (or from
+# an explicit --keys-file); the CLI never harvests environment variables.
+CONFIG_ROOT = pathlib.Path.home() / '.config'
+DEFAULT_KEYS_FILE = CONFIG_ROOT / 'strategy-terminal' / 'keys.json'
+
+# How many artefacts one command may pop in the browser (one tab each).
+BROWSER_OPEN_LIMIT = 10
+
+# Set by --no-cache; read by the cache wrapper at call time.
+_CACHE_DISABLED = False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -516,11 +529,10 @@ class _Proxy:
 def _cache_factory(*dargs, **dkw):
     """@st.cache_data / @st.cache_resource → passthrough with a light memo."""
     memo: dict = {}
-    disabled = os.environ.get('ST_CLI_NO_CACHE') == '1'
 
     def _decorate(fn):
         def wrapper(*args, **kwargs):
-            if disabled:
+            if _CACHE_DISABLED:
                 return fn(*args, **kwargs)
             try:
                 key = (repr(args), repr(sorted(kwargs.items())))
@@ -703,7 +715,10 @@ def render_table(data, max_rows: int = 60, out=None) -> None:
 
 
 def save_chart(payload, out_dir: str, index: int, console_out, max_traces: int = 3):
-    """Write a figure to PNG and emit a markdown image link."""
+    """Write a figure to PNG and emit a markdown image link.
+
+    Returns the PNG path that was written, or None when rendering failed.
+    """
     fig = payload['fig']
     caption = payload.get('caption') or ''
     height = payload.get('height') or 420
@@ -715,9 +730,9 @@ def save_chart(payload, out_dir: str, index: int, console_out, max_traces: int =
             fig.savefig(path, dpi=140, bbox_inches='tight')
         except Exception as e:
             print(f"(chart could not be saved: {e})", file=console_out)
-            return
+            return None
         print(f"![{caption or 'chart'}]({path})", file=console_out)
-        return
+        return path
 
     title = ''
     try:
@@ -733,7 +748,7 @@ def save_chart(payload, out_dir: str, index: int, console_out, max_traces: int =
         print(f"_chart not rendered as image ({type(e).__name__}); text summary:_",
               file=console_out)
         _render_chart_text(fig, console_out, max_traces)
-        return
+        return None
 
     alt = caption or title or f'chart {index}'
     # Keep the markdown alt text simple: em dashes / odd punctuation can stop
@@ -742,6 +757,7 @@ def save_chart(payload, out_dir: str, index: int, console_out, max_traces: int =
     alt = re.sub(r'\s+', ' ', alt).strip() or f'chart {index}'
     print(f"![{alt}]({path})", file=console_out)
     print(f"_{title}_  \n`{path}`" if title else f"`{path}`", file=console_out)
+    return path
 
 
 def _render_chart_text(fig, out, max_traces: int = 3):
@@ -767,12 +783,16 @@ def _render_chart_text(fig, out, max_traces: int = 3):
 
 def render_elements(elements, out_dir: str, out=None, images: bool = True,
                     max_rows: int = 60, show_tracebacks: bool = False,
-                    save_data: bool = False) -> None:
-    """Render everything the command produced."""
+                    save_data: bool = False) -> list:
+    """Render everything the command produced.
+
+    Returns the PNG paths written for `chart` elements, in order.
+    """
     out = out or sys.stdout
     elements = coalesce_cards(elements)
     chart_no = 0
     table_no = 0
+    written = []
 
     for el in elements:
         kind, payload = el['kind'], el.get('payload')
@@ -837,7 +857,9 @@ def render_elements(elements, out_dir: str, out=None, images: bool = True,
         elif kind == 'chart':
             chart_no += 1
             if images:
-                save_chart(payload, out_dir, chart_no, out)
+                saved = save_chart(payload, out_dir, chart_no, out)
+                if saved:
+                    written.append(saved)
             else:
                 print('```', file=out)
                 _render_chart_text(payload['fig'], out)
@@ -859,6 +881,8 @@ def render_elements(elements, out_dir: str, out=None, images: bool = True,
 
         elif kind == 'progress':
             pass
+
+    return written
 
 
 def md_to_rl(text: str) -> str:
@@ -949,23 +973,6 @@ def elements_to_sections(elements):
 #  3.  Login / API keys
 # ══════════════════════════════════════════════════════════════════════════════
 
-ENV_KEY_MAP = {
-    'alpha_vantage': ('ALPHA_VANTAGE_API_KEY', 'ALPHAVANTAGE_API_KEY'),
-    'fmp':           ('FMP_API_KEY', 'FINANCIALMODELINGPREP_API_KEY'),
-    'fred':          ('FRED_API_KEY',),
-    'polygon':       ('POLYGON_API_KEY',),
-    'newsapi_key':   ('NEWSAPI_KEY', 'NEWS_API_KEY'),
-    'finnhub':       ('FINNHUB_API_KEY',),
-    'alpaca_key':    ('ALPACA_API_KEY', 'APCA_API_KEY_ID'),
-    'alpaca_secret': ('ALPACA_SECRET_KEY', 'APCA_API_SECRET_KEY'),
-    'openai_key':    ('OPENAI_API_KEY',),
-    'openai_url':    ('OPENAI_BASE_URL', 'OPENAI_API_BASE'),
-    'openai_model':  ('OPENAI_MODEL',),
-    'gmail_user':    ('GMAIL_USER',),
-    'gmail_pass':    ('GMAIL_APP_PASSWORD',),
-}
-
-
 def list_users():
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -983,26 +990,12 @@ def email_for_user(user_id: int):
         return None
 
 
-def load_session():
-    try:
-        with open(SESSION_FILE) as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
-
-
-def save_session(user_id: int, email: str):
-    try:
-        os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
-        with open(SESSION_FILE, 'w') as fh:
-            json.dump({'user_id': user_id, 'email': email,
-                       'saved_at': datetime.now().isoformat(timespec='seconds')}, fh)
-    except Exception:
-        pass
-
-
 def resolve_user(args, interactive_ok: bool):
-    """Return (user_id, email, how) using flags → session file → single user."""
+    """Return (user_id, email, how) using flags → single user in the database.
+
+    No session is cached on disk: credentials and the chosen account are never
+    written anywhere by this CLI.
+    """
     from database import verify_user
 
     if args.user_id:
@@ -1012,24 +1005,18 @@ def resolve_user(args, interactive_ok: bool):
         return args.user_id, email, 'flag --user-id'
 
     if args.email:
-        pwd = args.password or os.environ.get('ST_CLI_PASSWORD')
+        pwd = args.password
         if pwd is None and interactive_ok and sys.stdin.isatty():
             import getpass
             pwd = getpass.getpass(f"Password for {args.email}: ")
         ok, msg, uid = verify_user(args.email, pwd or '')
         if not ok:
             _die(f"Login failed for {args.email}: {msg}")
-        save_session(uid, args.email)
         return uid, args.email, 'password login'
-
-    sess = load_session()
-    if sess.get('user_id') and email_for_user(sess['user_id']):
-        return sess['user_id'], sess['email'], 'saved session'
 
     users = list_users()
     if len(users) == 1:
         uid, email = users[0]
-        save_session(uid, email)
         return uid, email, 'only user in database'
 
     if users and interactive_ok and sys.stdin.isatty():
@@ -1047,7 +1034,6 @@ def resolve_user(args, interactive_ok: bool):
             import getpass
             ok, msg, uid = verify_user(choice, getpass.getpass(f"Password for {choice}: "))
             if ok:
-                save_session(uid, choice)
                 return uid, choice, 'interactive login'
             _die(f"Login failed: {msg}")
 
@@ -1057,41 +1043,40 @@ def resolve_user(args, interactive_ok: bool):
     _die("No users in users.db. Create one through the Streamlit app first.")
 
 
+def _read_keys_file(path) -> dict:
+    """Read a JSON object of {service: key} from a local file."""
+    data = json.loads(pathlib.Path(path).expanduser().read_text(encoding='utf-8'))
+    return data if isinstance(data, dict) else {}
+
+
 def build_api_keys(user_id: int, args) -> tuple[dict, list]:
-    """Merge DB keys with a keys file and environment variables. Returns (keys, sources)."""
+    """Merge DB keys with a local keys file. Returns (keys, sources).
+
+    Keys come only from the local account database, an explicit --keys-file,
+    or the default keys file.  Environment variables are never consulted.
+    """
     from database import get_user_api_keys, KNOWN_SERVICES
 
     keys = {s: '' for s in KNOWN_SERVICES}
-    keys.update({k: '' for k in ('openai_key', 'openai_url', 'openai_model')})
     sources: list = []
     if user_id:
         keys.update(get_user_api_keys(user_id))
         if any(keys.values()):
             sources.append('account')
 
-    if args.keys_file:
+    key_file = pathlib.Path(args.keys_file) if args.keys_file else DEFAULT_KEYS_FILE
+    if key_file.is_file():
         try:
-            with open(os.path.expanduser(args.keys_file)) as fh:
-                file_keys = json.load(fh)
+            file_keys = _read_keys_file(key_file)
             for k, v in file_keys.items():
                 if v and not keys.get(k):
                     keys[k] = v
-            sources.append(f'keys-file({os.path.basename(args.keys_file)})')
+            sources.append(f'keys-file({key_file.name})')
         except Exception as e:
-            print(f"⚠️  Could not read --keys-file: {e}", file=sys.stderr)
-
-    if not args.no_env_keys:
-        used = []
-        for key, env_names in ENV_KEY_MAP.items():
-            if keys.get(key):
-                continue
-            for name in env_names:
-                if os.environ.get(name):
-                    keys[key] = os.environ[name]
-                    used.append(key)
-                    break
-        if used:
-            sources.append('env')
+            where = '--keys-file' if args.keys_file else 'default keys file'
+            print(f"⚠️  Could not read {where}: {e}", file=sys.stderr)
+    elif args.keys_file:
+        print(f"⚠️  Could not read --keys-file: {key_file} not found", file=sys.stderr)
 
     return keys, sources
 
@@ -1182,8 +1167,7 @@ def write_markdown_report(path: str, command: str, elements, out_dir: str, email
     print(f"# Terminal report — `{command.upper()}`\n", file=buf)
     print(f"_{datetime.now():%Y-%m-%d %H:%M} · {email}_\n", file=buf)
     render_elements(elements, out_dir, out=buf, images=True, max_rows=200)
-    with open(path, 'w') as fh:
-        fh.write(buf.getvalue())
+    pathlib.Path(path).write_text(buf.getvalue(), encoding='utf-8')
     return path
 
 
@@ -1200,8 +1184,7 @@ def export_pdf(path: str, command: str, elements, email: str):
     )
     path = os.path.abspath(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'wb') as fh:
-        fh.write(pdf)
+    pathlib.Path(path).write_bytes(pdf)
     return path
 
 
@@ -1211,26 +1194,51 @@ def pdf_pages_to_png(pdf_path: str) -> list[str]:
     return pdf_to_png(pdf_path, dpi=100)
 
 
-def open_pdf_in_browser(pdf_path: str) -> bool:
-    """Open `pdf_path` in the default browser, falling back to xdg-open."""
-    url = pathlib.Path(pdf_path).resolve().as_uri()
+def open_in_browser(path: str) -> bool:
+    """Open a local file (PDF, PNG, …) with the desktop's default handler.
+
+    Only Python's `webbrowser` module is used; the CLI never shells out to a
+    system command.
+    """
+    path = os.path.abspath(os.path.expanduser(path))
+    if not os.path.isfile(path):
+        return False
+    url = pathlib.Path(path).as_uri()
     try:
         import webbrowser
-        browser = os.environ.get('BROWSER') or None
-        opener = webbrowser.get(browser) if browser else webbrowser
-        if opener.open(url):
-            return True
-    except Exception:
-        pass
-    try:
-        import subprocess
-        subprocess.Popen(['xdg-open', pdf_path],
-                         stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
-        return True
+        return bool(webbrowser.open(url))
     except Exception as e:
-        print(f"⚠️  could not open the PDF: {e}", file=sys.stderr)
+        print(f"⚠️  could not open {os.path.basename(path)}: {e}", file=sys.stderr)
         return False
+
+
+def open_pdf_in_browser(pdf_path: str) -> bool:
+    """Backwards-compatible wrapper kept for the PDF export path."""
+    return open_in_browser(pdf_path)
+
+
+def open_outputs_in_browser(paths, label: str = 'file', limit: int = BROWSER_OPEN_LIMIT) -> int:
+    """Open exported artefacts in the default browser; returns how many opened.
+
+    One tab per file, capped at `limit` so a many-chart command cannot flood the
+    desktop.  Headless runs report the files as left on disk instead.
+    """
+    targets = [p for p in dict.fromkeys(paths or []) if p and os.path.isfile(p)]
+    if not targets:
+        return 0
+    cap = min(len(targets), limit)
+    opened = 0
+    for path in targets[:cap]:
+        if open_in_browser(path):
+            opened += 1
+    if opened:
+        print(f"🌐 opened {opened} {label}(s) in your browser")
+    else:
+        print(f"ℹ️  no browser available — {len(targets)} {label}(s) left on disk")
+    if len(targets) > cap:
+        print(f"ℹ️  {len(targets) - cap} more {label}(s) not opened "
+              f"(limit {limit}) — the paths are listed above")
+    return opened
 
 
 def flush_downloads(out_dir: str):
@@ -1239,16 +1247,15 @@ def flush_downloads(out_dir: str):
     for label, (file_name, data) in DOWNLOAD_FILES.items():
         try:
             path = os.path.join(out_dir, os.path.basename(file_name) or 'download.bin')
-            mode = 'wb'
             payload = data
-            if isinstance(data, str):
-                mode, payload = 'w', data
-            elif isinstance(data, (bytes, bytearray)):
+            if isinstance(data, (bytes, bytearray)):
                 payload = bytes(data)
-            else:                                   # file-like
+            elif not isinstance(data, str):          # file-like
                 payload = data.getvalue() if hasattr(data, 'getvalue') else str(data)
-            with open(path, mode) as fh:
-                fh.write(payload)
+            if isinstance(payload, str):
+                pathlib.Path(path).write_text(payload, encoding='utf-8')
+            else:
+                pathlib.Path(path).write_bytes(payload)
             written.append((label, path))
         except Exception as e:
             print(f"⚠️  Could not save download '{label}': {e}", file=sys.stderr)
@@ -1274,12 +1281,15 @@ def execute_once(cmd: str, ctx) -> int:
     elements, secs = run_command(cmd, ctx.keys, tracebacks=ctx.tracebacks)
 
     print_command_header(cmd)
-    render_elements(elements, cmd_dir, images=ctx.images,
-                    max_rows=ctx.max_rows, show_tracebacks=ctx.tracebacks,
-                    save_data=ctx.save_data)
+    chart_pngs = render_elements(elements, cmd_dir, images=ctx.images,
+                                 max_rows=ctx.max_rows, show_tracebacks=ctx.tracebacks,
+                                 save_data=ctx.save_data)
 
     for label, path in flush_downloads(cmd_dir):
         print(f"⬇️  `{label}` → `{path}`")
+
+    if getattr(ctx, 'open_images', False) and chart_pngs:
+        open_outputs_in_browser(chart_pngs, 'chart')
 
     if ctx.pdf:
         try:
@@ -1288,12 +1298,10 @@ def execute_once(cmd: str, ctx) -> int:
                                   cmd, elements, ctx.email)
             print(f"📄 PDF → `{pdf_path}`")
             if ctx.open_pdf:
-                if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')
-                        or os.environ.get('BROWSER')):
-                    print("ℹ️  no desktop session (DISPLAY/WAYLAND_DISPLAY/BROWSER unset) — "
-                          "PDF left on disk instead")
-                elif open_pdf_in_browser(pdf_path):
+                if open_pdf_in_browser(pdf_path):
                     print("🌐 opened the PDF in your browser")
+                else:
+                    print("ℹ️  no browser available — PDF left on disk")
             if ctx.pdf_png:
                 for png in pdf_pages_to_png(pdf_path):
                     print(f"![{_slug(cmd)} page]({png})")
@@ -1394,17 +1402,21 @@ def parse_args(argv):
                    help='command to run (repeatable, same as positional)')
     p.add_argument('--user-id', type=int, help='use this user id (skips password)')
     p.add_argument('--email', help='login e-mail')
-    p.add_argument('--password', help='login password (or ST_CLI_PASSWORD env var)')
+    p.add_argument('--password', help='login password (prompted when omitted and the terminal is interactive)')
     p.add_argument('--anonymous', '--no-login', action='store_true',
                    help='run without a user (market data works; WL/PNL/PORT/alerts need a login)')
     p.add_argument('--list-users', action='store_true', help='list users in users.db')
-    p.add_argument('--keys-file', help='JSON file of API keys to merge (DB keys win)')
-    p.add_argument('--no-env-keys', action='store_true',
-                   help='ignore *_API_KEY environment variables')
+    p.add_argument('--keys-file',
+                   help='JSON file of API keys to merge (DB keys win; '
+                        'default: config-root/strategy-terminal/keys.json)')
     p.add_argument('--out-dir', help='directory for PNGs/CSV/PDF (default cli_out/<ts>)')
     p.add_argument('--max-rows', type=int, default=60, help='max table rows (default 60)')
     p.add_argument('--no-images', action='store_true',
                    help='do not export charts as PNG — print text summaries instead')
+    p.add_argument('--open-images', action='store_true',
+                   help='open exported chart PNGs in the default browser (default)')
+    p.add_argument('--no-open-images', action='store_true',
+                   help='do not launch the browser for chart PNGs')
     p.add_argument('--no-save-data', action='store_true',
                    help='do not write captured tables to CSV')
     p.add_argument('--pdf', action='store_true',
@@ -1435,10 +1447,11 @@ def parse_args(argv):
 
 
 def main(argv=None) -> int:
+    global _CACHE_DISABLED
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
     if args.no_cache:
-        os.environ['ST_CLI_NO_CACHE'] = '1'
+        _CACHE_DISABLED = True
 
     FORCED_PRESSED.update(lbl.strip() for lbl in args.press if lbl.strip())
     if args.no_autopress:
@@ -1480,6 +1493,8 @@ def main(argv=None) -> int:
 
     seed_session_state(user_id, email, keys)
 
+    open_images = not args.no_images and not args.no_open_images
+
     ctx = types.SimpleNamespace(
         keys=keys, email=email, user_id=user_id, out_dir=out_dir,
         images=not args.no_images, max_rows=args.max_rows,
@@ -1490,6 +1505,9 @@ def main(argv=None) -> int:
         # produced — that is the only way to actually "display" a PDF.
         open_pdf=(args.open_pdf or bool(args.pdf) or bool(args.pdf_path))
                  and not args.no_open_pdf,
+        # Charts pop in the default browser too: the PNG on disk is the real
+        # artefact, and the browser is where a desktop user can zoom it.
+        open_images=open_images,
         debug=args.debug)
 
     print_banner(user_id, email, sources, out_dir, interactive=False)

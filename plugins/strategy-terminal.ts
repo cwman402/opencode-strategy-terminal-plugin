@@ -76,6 +76,7 @@ type RunInput = {
   command: string
   user?: string
   images?: boolean
+  open_images?: boolean
   show?: boolean
   open_pdf?: boolean
   max_rows?: number
@@ -95,7 +96,8 @@ const RUN_DESCRIPTION =
   "\"RISK NVDA\", \"TRA AAPL SPY 5y\", \"ANR AAPL\", \"RV AAPL\", \"SHORT AAPL\", " +
   "\"INSIDER AAPL\", \"IPO\", \"TOP\", \"ECAL\", \"SCREEN\", \"SEARCH apple\", " +
   "\"WL\"/\"PNL\"/\"PORT\"/\"LIST ALERT\" (need `user`), \"--list-commands\" (full reference). " +
-  "Runs anonymously unless `user` is given. Chart images come back with the result."
+  "Runs anonymously unless `user` is given. Chart images come back with the result and " +
+  "also open in the default browser (open_images: false or --no-open-images keeps it closed)."
 
 const COMMANDS_DESCRIPTION =
   "List every command supported by the Strategy Terminal (ticker, market, macro, news, " +
@@ -175,14 +177,16 @@ function chartImages(stdout: string): string[] {
   return [...found]
 }
 
-/** Pull `--show` / PDF viewer flags out of the command text. */
+/** Pull `--show` / PDF / browser flags out of the command text. */
 function splitShowFlags(command: string): {
   command: string
   show?: boolean
   openPdf?: boolean
+  openImages?: boolean
 } {
   let show: boolean | undefined
   let openPdf: boolean | undefined
+  let openImages: boolean | undefined
   const kept: string[] = []
 
   for (const token of command.trim().split(/\s+/)) {
@@ -194,12 +198,16 @@ function splitShowFlags(command: string): {
       openPdf = true
     } else if (token === "--no-open-pdf") {
       openPdf = false
+    } else if (token === "--open-images") {
+      openImages = true
+    } else if (token === "--no-open-images") {
+      openImages = false
     } else {
       kept.push(token)
     }
   }
 
-  return { command: kept.join(" "), show, openPdf }
+  return { command: kept.join(" "), show, openPdf, openImages }
 }
 
 /** CLI arguments for one terminal command. */
@@ -209,6 +217,7 @@ function buildArgs(input: RunInput): string[] {
   const command = parsed.command || input.command.trim()
   const show = input.show ?? parsed.show ?? false
   const openPdf = input.open_pdf ?? parsed.openPdf ?? true
+  const openImages = input.open_images ?? parsed.openImages ?? true
 
   if (input.user) {
     const who = input.user.trim()
@@ -220,6 +229,10 @@ function buildArgs(input: RunInput): string[] {
   args.push("--no-save-data")
   if (input.images === false) args.push("--no-images")
   if (input.max_rows) args.push("--max-rows", String(input.max_rows))
+  // Chart PNGs open in the default browser unless asked otherwise; a
+  // text-only run has no images to open.
+  if (input.images === false || !openImages) args.push("--no-open-images")
+  else args.push("--open-images")
   // `--show` renders the report, opens it in the browser, and returns its
   // pages as images. `open_pdf: false` keeps the PDF on disk instead.
   if (show) {
@@ -274,6 +287,12 @@ const RUN_INPUT_SCHEMA = {
         "Act as this user: a numeric id or an e-mail. Omit to run anonymously (default).",
     },
     images: { type: "boolean", description: "Export charts as PNG images (default true)." },
+    open_images: {
+      type: "boolean",
+      description:
+        "Open each exported chart PNG in the default desktop browser (default true; " +
+        "set false or use --no-open-images to keep the browser closed).",
+    },
     show: {
       type: "boolean",
       description:
@@ -351,6 +370,13 @@ async function serverV1() {
             .string()
             .optional()
             .describe("Numeric user id or e-mail; omit to run anonymously"),
+          open_images: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Open exported chart PNGs in the default browser (default true; set false " +
+                "or pass --no-open-images to keep it closed)",
+            ),
           show: tool.schema
             .boolean()
             .optional()

@@ -1413,10 +1413,10 @@ TERMINAL_SHORTCUTS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Default remote OpenAI-compatible base URL (override in sidebar)
-DEFAULT_REMOTE_URL = "http://your-remote-service/v1"
+DEFAULT_REMOTE_URL = ""
 
 # Default local LLM base URL (Ollama). LM Studio uses port 1234.
-DEFAULT_LOCAL_URL  = "http://localhost:11434"
+DEFAULT_LOCAL_URL  = ""
 
 # OpenAI cloud models  (label, model_id, supports_tools)
 OPENAI_MODELS = [
@@ -2080,7 +2080,7 @@ def chat_page():
                 "Server URL",
                 value=ss.chat_local_url,
                 key="chat_local_url_input",
-                placeholder="http://localhost:11434",
+                placeholder="https://…",
                 help="Ollama: port 11434 · LM Studio: port 1234 · llama.cpp: port 8080",
             )
             ss.chat_local_url = local_url.strip().rstrip('/')
@@ -2129,8 +2129,7 @@ def chat_page():
         # ── OPENROUTER (FREE) ─────────────────────────────────────────────
         elif ss.chat_provider == 'openrouter':
             ss.chat_remote_url = 'https://openrouter.ai/api/v1'
-            OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY', '').strip()
-            or_key = OPENROUTER_KEY
+            or_key = ''
             st.caption("✅ Using free OpenRouter API")
 
             st.markdown("**Select Model:**")
@@ -2187,7 +2186,7 @@ def chat_page():
                                 "max_tokens": 5,
                             }
                             test_hdrs = {
-                                "Authorization": f"Bearer {OPENROUTER_KEY}",
+                                "Authorization": f"Bearer {or_key}",
                                 "Content-Type": "application/json",
                                 "HTTP-Referer": "https://strategymind.ai",
                                 "X-Title": "StrategyTerminal",
@@ -2235,7 +2234,7 @@ def chat_page():
                 "Remote API URL",
                 value=ss.chat_remote_url,
                 key="chat_remote_url_input",
-                placeholder="http://your-remote-service/v1",
+                placeholder="https://…",
                 help="Base URL of your OpenAI-compatible remote service (without /chat/completions)",
             )
             ss.chat_remote_url = remote_url.strip().rstrip('/')
@@ -2315,7 +2314,7 @@ def chat_page():
                 "1. Start your local server (Ollama / LM Studio / llama.cpp)  \n"
                 "2. Enter the server URL in the sidebar  \n"
                 "3. Click **🔄 Detect** to discover available models  \n\n"
-                "Ollama default: `http://localhost:11434`  \n"
+                "Ollama default: your local Ollama URL  \n"
                 "LM Studio default: `http://localhost:1234`"
             )
         elif ss.chat_provider == 'openrouter':

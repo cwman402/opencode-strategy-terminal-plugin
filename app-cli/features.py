@@ -2847,14 +2847,19 @@ def cmd_polygon_iv(parts: list, api_keys: dict):
 def _fred_fetch(series_id: str, api_keys: dict = None, limit: int = 120) -> pd.DataFrame:
     fred_key = (api_keys or {}).get('fred', '')
     try:
-        base = 'https://fred.stlouisfed.org/graph/fredgraph.csv'
+        from config import FRED_GRAPH_HOST, FRED_GRAPH_PATH
+        base = f'https://{FRED_GRAPH_HOST}{FRED_GRAPH_PATH}'
         params = {'id': series_id}
         if fred_key: params['api_key'] = fred_key
         r = requests.get(base, params=params, timeout=10)
         if r.status_code == 200:
             from io import StringIO
-            df = pd.read_csv(StringIO(r.text), parse_dates=['DATE'])
-            df = df.rename(columns={'DATE': 'Date', series_id: 'Value'})
+            df = pd.read_csv(StringIO(r.text))
+            # FRED used to call the date column DATE; the CSV endpoint now
+            # emits observation_date.  Accept either.
+            date_col = 'DATE' if 'DATE' in df.columns else 'observation_date'
+            df = df.rename(columns={date_col: 'Date', series_id: 'Value'})
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df = df.dropna()
             df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
             df = df.dropna()

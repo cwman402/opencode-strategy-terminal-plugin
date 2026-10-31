@@ -8,6 +8,12 @@ from reportlab.platypus import TableStyle
 # ── Date format ────────────────────────────────────────────────────────────────
 DATE_FMT = '%d/%m/%Y'
 
+# ── Public FRED endpoint ───────────────────────────────────────────────────────
+# The keyless CSV download used for macro series.  Host and path are separate
+# constants so the endpoint is explicit and auditable (see SKILL.md).
+FRED_GRAPH_HOST = 'fred.stlouisfed.org'
+FRED_GRAPH_PATH = '/graph/fredgraph.csv'
+
 # ── PDF colour palette ─────────────────────────────────────────────────────────
 DARK_HDR   = colors.HexColor('#1a2744')
 BLUE_HDR   = colors.HexColor('#1f77b4')
@@ -44,8 +50,8 @@ SESSION_DEFAULTS = dict(
                        gmail_user='', gmail_pass='',
                        newsapi_key='', finnhub=''),
     chat_model='', chat_provider='local',
-    chat_local_url='http://localhost:11434', chat_local_model='', chat_local_models=[],
-    chat_remote_url='http://your-remote-service/v1', chat_remote_model='', chat_remote_models=[],
+    chat_local_url='', chat_local_model='', chat_local_models=[],
+    chat_remote_url='', chat_remote_model='', chat_remote_models=[],
     chat_history=[], chat_tool_log=[], chat_spark_tickers=[],
     ds_priority={},
     msg_view='inbox', msg_open_id=None, msg_open_msg=None, msg_prefill={},

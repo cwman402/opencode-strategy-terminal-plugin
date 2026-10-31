@@ -21,7 +21,7 @@ try:
 except ImportError:
     _YF_OK = False
 
-from config import CHART_STYLE
+from config import CHART_STYLE, FRED_GRAPH_HOST, FRED_GRAPH_PATH
 from database import (get_user_api_keys, save_user_api_keys,
                        add_price_alert, remove_price_alert, get_user_alerts)
 from features import (cmd_wl, cmd_earn, cmd_ecal, cmd_pnl, cmd_corr, cmd_vol,
@@ -635,7 +635,7 @@ def _yf_info(symbol: str) -> dict:
 def _yf_news(symbol: str) -> list:
     if not _YF_OK: return []
     try:
-        from chat import _yf_news_items
+        from news import _yf_news_items
         return _yf_news_items(symbol, limit=15)
     except: return []
 
@@ -670,15 +670,19 @@ def _yf_dividends(symbol: str):
 def _fetch_fred(series_id: str, fred_api_key: str = '', limit: int = 120) -> pd.DataFrame:
     """Fetch from FRED. Works without API key for public series (via HTML fallback)."""
     try:
-        base = 'https://fred.stlouisfed.org/graph/fredgraph.csv'
+        base = f'https://{FRED_GRAPH_HOST}{FRED_GRAPH_PATH}'
         params = {'id': series_id}
         if fred_api_key:
             params['api_key'] = fred_api_key
         r = requests.get(base, params=params, timeout=10)
         if r.status_code == 200:
             from io import StringIO
-            df = pd.read_csv(StringIO(r.text), parse_dates=['DATE'])
-            df = df.rename(columns={'DATE': 'Date', series_id: 'Value'})
+            df = pd.read_csv(StringIO(r.text))
+            # FRED used to call the date column DATE; the CSV endpoint now
+            # emits observation_date.  Accept either.
+            date_col = 'DATE' if 'DATE' in df.columns else 'observation_date'
+            df = df.rename(columns={date_col: 'Date', series_id: 'Value'})
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df = df.dropna()
             df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
             df = df.dropna()
@@ -2173,7 +2177,7 @@ def cmd_crypto_top(api_keys: dict):
 
 def cmd_news_feed(api_keys: dict):
     """NEWS FEED — aggregated news from 13+ RSS feeds."""
-    from chat import FINANCIAL_RSS_FEEDS, _news_rss
+    from news import FINANCIAL_RSS_FEEDS, _news_rss
     st.markdown(f"<div class='term-header'>📰  NEWS FEED — AGGREGATED RSS</div>",
                 unsafe_allow_html=True)
     result = _news_rss('')
@@ -2202,7 +2206,7 @@ def cmd_news_feed(api_keys: dict):
 
 def cmd_news_sentiment(query: str):
     """NEWS SENTIMENT — news with GDELT tone/sentiment scoring."""
-    from chat import _news_gdelt
+    from news import _news_gdelt
     st.markdown(f"<div class='term-header'>📊  NEWS SENTIMENT — {query.upper()}</div>",
                 unsafe_allow_html=True)
     try:
@@ -2247,7 +2251,7 @@ def cmd_news_sentiment(query: str):
 
 def cmd_sentiment(ticker: str):
     """SENTIMENT <ticker> — news sentiment analysis for a stock."""
-    from chat import _news_gdelt
+    from news import _news_gdelt
     st.markdown(f"<div class='term-header'>📊  SENTIMENT — {ticker.upper()}</div>",
                 unsafe_allow_html=True)
 
@@ -2349,7 +2353,7 @@ def cmd_econ_global(api_keys: dict):
         row = {'Indicator': ind_name}
         for c in COUNTRIES:
             try:
-                url = f'http://api.worldbank.org/v2/country/{c}/indicator/{ind_code}'
+                url = f'https://api.worldbank.org/v2/country/{c}/indicator/{ind_code}'
                 r = _req.get(url, params={'format': 'json', 'per_page': 3, 'date': '2020:2030'},
                              timeout=8)
                 data = r.json()
@@ -3549,7 +3553,7 @@ def terminal_page():
             k.get('newsapi_key', ''),
             type="password",
             key="ak_news",
-            placeholder="e.g. a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+            placeholder="YOUR_NEWSAPI_KEY_HERE",
             help="Free key from newsapi.org — powers NEWS command and AI Chat news queries",
         )
         na2.markdown(
@@ -3595,12 +3599,12 @@ def terminal_page():
         ac1, ac2, ac3 = st.columns(3)
         k['openai_key'] = ac1.text_input("Remote LLM — API Key", k.get('openai_key', ''),
                                           type="password", key="ak_or",
-                                          placeholder="sk-...",
+                                          placeholder="YOUR_API_KEY_HERE",
                                           help="API key for your OpenAI-compatible remote service.")
         k['openai_url'] = ac2.text_input("Remote LLM — Base URL", k.get('openai_url', ''),
                                           key="ak_openai_url",
-                                          placeholder="http://your-service/v1",
-                                          help="Base URL of your remote service (e.g. http://host/v1). Used as the default in AI Chat.")
+                                          placeholder="https://…",
+                                          help="Base URL of your remote service, if you use one. Used as the default in AI Chat.")
         k['openai_model'] = ac3.text_input("Remote LLM — Default Model", k.get('openai_model', ''),
                                             key="ak_openai_model",
                                             placeholder="e.g. gpt-4o, mistral-large",

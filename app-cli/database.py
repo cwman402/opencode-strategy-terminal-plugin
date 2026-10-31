@@ -1,7 +1,7 @@
 """
 database.py – SQLite database initialisation, user authentication, and strategy CRUD.
 """
-import sqlite3, hashlib, os, time
+import sqlite3, hashlib, os, pathlib, time
 import streamlit as st
 
 DB_PATH = 'users.db'
@@ -195,8 +195,7 @@ def add_strategy_to_user(user_id, data, uploaded_file):
         ts = int(time.time())
         ext = os.path.splitext(uploaded_file.name)[1]
         fname = f"user_{user_id}_{ts}{ext}"
-        with open(f'./uploads/{fname}', 'wb') as f:
-            f.write(uploaded_file.getbuffer())
+        pathlib.Path(f'./uploads/{fname}').write_bytes(uploaded_file.getbuffer())
         with _db() as conn:
             c = conn.cursor()
             c.execute('''INSERT INTO strategies
@@ -225,8 +224,7 @@ def update_strategy(strategy_id, data, uploaded_file=None):
                 ts = int(time.time())
                 ext = os.path.splitext(uploaded_file.name)[1]
                 new_fname = f"user_{uid}_{ts}{ext}"
-                with open(f'./uploads/{new_fname}', 'wb') as f:
-                    f.write(uploaded_file.getbuffer())
+                pathlib.Path(f'./uploads/{new_fname}').write_bytes(uploaded_file.getbuffer())
             else:
                 new_fname = cur_fname
             c.execute('''UPDATE strategies SET name=?,description_line1=?,description_line2=?,
@@ -336,8 +334,7 @@ def send_message(sender_id: int, recipient_email: str, subject: str,
             ext = os.path.splitext(uploaded_file.name)[1]
             att_fname = f"msg_{sender_id}_{ts}{ext}"
             att_orig  = uploaded_file.name
-            with open(f'{UPLOADS_DIR}{att_fname}', 'wb') as f:
-                f.write(uploaded_file.getbuffer())
+            pathlib.Path(f'{UPLOADS_DIR}{att_fname}').write_bytes(uploaded_file.getbuffer())
 
         with _db() as conn:
             c = conn.cursor()
